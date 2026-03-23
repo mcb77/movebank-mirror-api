@@ -1,0 +1,12 @@
+.gradle
+.idea
+gradle.properties
+build
+*/build
+node_modules
+tmp
+*~
+.eslintcache
+/config/
+*.log
+work
