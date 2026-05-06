@@ -21,3 +21,8 @@ bin/
 local.properties
 .env
 /tmp/
+
+# R session/history files (compatibility/move-r/)
+.Rhistory
+.RData
+.Rproj.user/
