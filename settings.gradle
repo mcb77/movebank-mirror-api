@@ -1,1 +1,17 @@
-rootProject.name = 'mullet-server'
+rootProject.name = 'movebank-mirror-api'
+
+if (hasProperty('localMovebankApiClient')) {
+    includeBuild('../movebank-api-client') {
+        dependencySubstitution {
+            substitute module('de.firetail.compat.movebank:movebank-api-client') using project(':')
+        }
+    }
+}
+
+if (hasProperty('localMovebankMirror')) {
+    includeBuild('../movebank-mirror') {
+        dependencySubstitution {
+            substitute module('de.firetail.compat.movebank:movebank-mirror') using project(':lib')
+        }
+    }
+}

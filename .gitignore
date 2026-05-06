@@ -1,12 +1,23 @@
-.gradle
-.idea
-gradle.properties
-build
-*/build
-node_modules
-tmp
+.gradle/
+build/
+out/
+bin/
+
+# IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
 *~
-.eslintcache
-/config/
-*.log
-work
+
+# Local secrets / scratch
+local.properties
+.env
+/tmp/

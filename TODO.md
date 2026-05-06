@@ -2,7 +2,14 @@
 
 ## Known gaps (the 20%)
 
-- **`attributes` projection** — the `attributes` request parameter is currently ignored; all columns are always returned. Should filter the CSV output to the requested columns, and reorder to match the requested order. This matters when callers build requests via `StudyBrowser.getRequestBuilderEvent()` which explicitly lists attributes.
+Closed in v0.0.1 (verified by [`compatibility/move-r/`](compatibility/move-r/)):
+
+- ~~`event` without `sensor_type_id`~~ — server now enumerates every sensor type in the study's metadata when no sensor type is specified.
+- ~~`attributes` projection~~ — response is now projected to the requested columns in the requested order; missing-from-source columns emit `NA`.
+- ~~CSV-list parameters~~ — `sensor_type_id`, `individual_id`, and `deployment_id` accept either a single id or a comma-separated list.
+- ~~event row enrichment~~ — `tag_id`, `individual_id`, `deployment_id`, and a synthetic `event_id` are injected per row from the directory layout + deployment-window lookup.
+
+Still open:
 
 - **`sort` parameter** — currently ignored. Low priority for batch/offline use.
 
@@ -20,4 +27,4 @@
 
 - **Structured error responses** — currently returns a bare HTTP 400 for unknown `entity_type`. Could return a more informative body.
 
-- **Tests** — add an integration test that starts the server against the sample mirror in `/tmp/mullet-mirror` and exercises each entity type via `MulletRestClient`.
+- **Tests** — `DirectReadIntegrationTest` covers the controller wiring and the `tag_type` happy path. Extend it to drive each entity type against a populated tmp mirror via `MovebankApiClient`.
