@@ -24,8 +24,15 @@ public class EventService {
         this.mirrorService = mirrorService;
     }
 
-    /** Synthetic columns the server can fill from filesystem layout + deployment metadata. */
-    private static final Set<String> SYNTHETIC_COLS = Set.of(
+    /**
+     * Synthetic columns the server can fill from filesystem layout + deployment
+     * metadata. Order is fixed and shared between {@link #augmentHeader} and
+     * {@link #augmentRow}: the rows append values in the same order that the
+     * header appends names. {@code Set.of(...)} would not work — its iteration
+     * order is unspecified and JVM-implementation-dependent, which would
+     * silently shuffle values into wrong columns.
+     */
+    private static final List<String> SYNTHETIC_COLS = List.of(
             "tag_id", "individual_id", "deployment_id", "event_id");
 
     public void writeEvents(Map<String, String> params, CSVWriter csv) throws Exception {
@@ -55,6 +62,19 @@ public class EventService {
         if (sensorTypeIds.isEmpty()) sensorTypeIds = sensorTypesForStudy(studyId);
         if (sensorTypeIds.isEmpty()) return;
 
+        // When the caller didn't specify an attribute projection, synthesise one
+        // from the union of every source CSV's columns plus the synthetic
+        // columns. This unifies the single-sensor-type and multi-sensor-type
+        // aggregation paths: with multiple sensor types the source schemas
+        // differ (GPS rows have location_lat/long, acceleration rows don't), so
+        // the only correct way to share one CSV stream is to project everything
+        // to a stable union header. With one sensor type the projection is
+        // effectively identity. Either way every emitted row aligns with the
+        // header.
+        List<String> effectiveAttrs = (requestedAttrs != null)
+                ? requestedAttrs
+                : buildUnionAttrs(studyDir, sensorTypeIds, tagId);
+
         // Build the per-tag deployment lookup once for the whole response.
         // Used to enrich event rows with tag_id / individual_id / deployment_id
         // (the on-disk CSV files don't carry these — they come from the
@@ -68,13 +88,41 @@ public class EventService {
             if (individualId != null || deploymentId != null) {
                 headerWritten = writeEventsForDeployments(
                         studyId, stid, individualId, deploymentId, studyDir, csv,
-                        requestedAttrs, deploymentsByTag, idSeq, headerWritten);
+                        effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
             } else {
                 headerWritten = streamCsvFiles(
                         tagDirs(studyDir, tagId), stid, null, csv,
-                        requestedAttrs, deploymentsByTag, idSeq, headerWritten);
+                        effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
             }
         }
+    }
+
+    /**
+     * Returns the union of all source-CSV column names across {@code sensorTypeIds},
+     * with the synthetic columns appended. Order: source columns first (in
+     * first-seen order, deterministic because sensorTypeIds is sorted and tagDirs
+     * are sorted), then any synthetic columns not already present.
+     */
+    private List<String> buildUnionAttrs(File studyDir, List<String> sensorTypeIds,
+                                          String tagId) throws Exception {
+        LinkedHashSet<String> union = new LinkedHashSet<>();
+        for (String stid : sensorTypeIds) {
+            for (File tagDir : tagDirs(studyDir, tagId)) {
+                if (!tagDir.isDirectory()) continue;
+                File[] csvs = tagDir.listFiles(
+                        (d, n) -> n.startsWith(stid + "_") && n.endsWith(".csv"));
+                if (csvs == null || csvs.length == 0) continue;
+                Arrays.sort(csvs);
+                try (CSVReader reader = new CSVReader(
+                        new InputStreamReader(new FileInputStream(csvs[0]), StandardCharsets.UTF_8))) {
+                    String[] header = reader.readNext();
+                    if (header != null) Collections.addAll(union, header);
+                }
+                break; // one file per sensor type is enough to learn its columns
+            }
+        }
+        for (String s : SYNTHETIC_COLS) union.add(s);
+        return new ArrayList<>(union);
     }
 
     /** Mutable monotonic event_id source — synthetic, scoped to a single response. */
@@ -83,9 +131,17 @@ public class EventService {
         long next() { return n++; }
     }
 
-    /** Parses a comma-separated attribute list. Returns null when absent/empty. */
+    /**
+     * Parses a comma-separated attribute list. Returns null when absent/empty
+     * <em>or</em> when the value is the special token {@code "all"}: Movebank's
+     * live API treats {@code attributes=all} as "every column from the source",
+     * with no projection. {@code move2::movebank_download_study} sends this by
+     * default. Returning null routes the caller down the no-projection path,
+     * matching that behaviour.
+     */
     private static List<String> parseAttributes(String csv) {
         if (csv == null || csv.isEmpty()) return null;
+        if ("all".equalsIgnoreCase(csv.trim())) return null;
         List<String> out = new ArrayList<>();
         for (String token : csv.split(",")) {
             String t = token.trim();

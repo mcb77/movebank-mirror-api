@@ -35,6 +35,7 @@ canonical client libraries used in practice:
 |-----------------------------------------------------------------------------|----------|-------------------------------------------------------------------|
 | [`movebank-api-client`](https://github.com/mcb77/movebank-api-client)       | Java     | [`DirectReadIntegrationTest`](src/test/java/de/firetail/compat/movebank/mirror/api/DirectReadIntegrationTest.java) (in-process, every build) |
 | [`move`](https://cran.r-project.org/package=move)                           | R        | [`compatibility/move-r/`](compatibility/move-r/) (script, run before each release) |
+| [`move2`](https://cran.r-project.org/package=move2)                         | R        | [`compatibility/move2-r/`](compatibility/move2-r/) (script, run before each release) |
 
 Adding a check for another client: see [`compatibility/`](compatibility/).
 

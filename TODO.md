@@ -9,11 +9,21 @@ Closed in v0.0.1 (verified by [`compatibility/move-r/`](compatibility/move-r/)):
 - ~~CSV-list parameters~~ — `sensor_type_id`, `individual_id`, and `deployment_id` accept either a single id or a comma-separated list.
 - ~~event row enrichment~~ — `tag_id`, `individual_id`, `deployment_id`, and a synthetic `event_id` are injected per row from the directory layout + deployment-window lookup.
 
+Closed for `move2` 0.5.0 compatibility (verified by [`compatibility/move2-r/`](compatibility/move2-r/)):
+
+- ~~`attributes=all` was treated as a literal one-column projection~~ — now recognised as the live API's "no projection" sentinel.
+- ~~`/deployment` exposed `tag_id` and `individual_id` by default~~ — now dropped unless explicitly requested via `attributes=…`, matching the live API's behaviour. (Required for `move2::movebank_download_deployment`'s join pipeline.)
+- ~~`writeMaps`-based endpoints (`/study`, `/tag`, `/individual`, `/deployment`, `/sensor`) ignored the `attributes` parameter~~ — now project to the requested column list when one is provided.
+
 Still open:
 
 - **`sort` parameter** — currently ignored. Low priority for batch/offline use.
 
-- **`limit` parameter** — currently ignored.
+- **`limit` parameter** — currently ignored. Note: live Movebank actually rejects `limit=` with HTTP 500 ("limit not supported") on the event endpoint; a future fix could either match that or implement real limit support.
+
+- **`/event` with `attributes=all` is missing server-derived join columns.** Verified 2026-05-07 against live: the live response includes `study_id`, `individual_local_identifier`, `tag_local_identifier`, `individual_taxon_canonical_name` in addition to the linkage IDs. We don't synthesize these. Neither `move` nor `move2` triggers it; closing would require adding 4 server-side joins in `EventService`.
+
+- **`/event` column order differs from live.** Live: linkage IDs first, then derived identifiers, then alphabetical sensor measurements, then `event_id`. Ours: union-of-source-headers in first-seen order. R clients access by name so 4/4 passes; positional clients would break.
 
 - **Authentication** — credentials passed in HTTP headers (`user`, `password`) are accepted without validation. Add configurable credential checking if the server is exposed beyond localhost.
 

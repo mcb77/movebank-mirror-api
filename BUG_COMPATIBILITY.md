@@ -275,17 +275,142 @@ intentionally a per-call instance, not a service-scoped singleton.
 
 ---
 
+### `attributes=all` means "no projection"
+
+**Live behaviour.** Movebank's API treats the literal string
+`attributes=all` as a sentinel meaning "every column from the source
+data, no projection." This is distinct from a column literally named
+`all` — there is no such column.
+
+**Why it matters.** `move2::movebank_download_study` issues
+`attributes=all` by default for full study downloads. A naive
+implementation would split the value on commas, get `["all"]`, and
+project the response to a one-column literal-`all` filter — yielding
+empty rows.
+
+**Where we encode it.** `EventService.parseAttributes` returns null
+(meaning "no projection") when the value is `"all"` (case-insensitive).
+`MirrorService.parseAttributes` does the same. The null then routes
+through the union-of-source-columns path that `EventService.writeEvents`
+synthesises automatically.
+
+---
+
+### `/deployment` omits foreign-key columns by default
+
+**Live behaviour.** When the `/deployment` endpoint is queried *without*
+an explicit `attributes=…`, Movebank's response **omits the foreign-key
+columns** `tag_id` and `individual_id`. They're returned only when the
+caller asks for them by name (e.g.
+`attributes=id,tag_id,individual_id`).
+
+You can see the workaround for this baked into our own mirror: see
+[`MovebankMirror.getAllDeploymentRefDataForStudy`](https://github.com/mcb77/movebank-mirror/blob/master/lib/src/main/java/de/firetail/compat/movebank/mirror/MovebankMirror.java)
+issues two requests per study (one full, one with explicit
+`attributes=id,individual_id,tag_id`) and merges them. The on-disk
+mirror data therefore *does* carry these columns, but emitting them by
+default breaks downstream clients designed against the live API's
+shape.
+
+**Why it matters.** `move2::movebank_download_deployment` does:
+
+```r
+deployment_data  <- movebank_retrieve("deployment", study_id, rename_columns=TRUE)
+deployment_table <- movebank_retrieve("deployment", study_id, attributes=c("id","tag_id","individual_id"), rename_columns=TRUE)
+
+left_join(deployment_table, deployment_data, "deployment_id")          # collision check ↓
+left_join(..., individual_data, "individual_id", suffix=c("","_individual"))
+```
+
+If `deployment_data` includes `individual_id` (and `tag_id`), the first
+join produces `individual_id.x` / `individual_id.y` (default
+`.x/.y` suffix). The second join then can't find a column named just
+`individual_id` and dies with *"Join columns in `x` must be present in
+the data."* Against the live API, `deployment_data` doesn't include
+`individual_id` to begin with, so there's no collision.
+
+**Where we encode it.** [`MirrorService.writeDeployments`](src/main/java/de/firetail/compat/movebank/mirror/api/MirrorService.java):
+when no `attributes` is requested, the response is filtered to drop the
+columns listed in `DEPLOYMENT_LINKAGE_COLUMNS` (currently `tag_id`,
+`individual_id`). The primary key column `id` is left in place — the
+live API does return that — and after `move2`'s rename pass it becomes
+`deployment_id`, which is the join key.
+
+**Don't extend the drop list to `id`.** `id` becomes `deployment_id`
+after rename, and dropping it would break the join from the other side
+(*"Join columns in `y` must be present in the data."*).
+
+**Don't make this conditional on the user-agent or other request
+features.** The behavior is "no `attributes=` ⇒ omit foreign keys."
+That's the live API's rule. Replicate it unconditionally.
+
+---
+
 ### `tag_type` is hard-coded, not derived
 
 **Live behaviour.** Movebank's tag-type catalogue is a small, fixed table.
-Clients treat it as a stable lookup.
+Clients treat it as a stable lookup. Verified 2026-05-07 by curl against
+the live API: 5 columns (alphabetical) — `description`, `external_id`,
+`id`, `is_location_sensor`, `name` — and 9 rows.
 
-**Where we encode it.** `MirrorService.TAG_TYPES`. Five entries, hard-coded.
+**Where we encode it.** `MirrorService.TAG_TYPES` + `TAG_TYPE_HEADER`.
+The 9 entries match live's IDs exactly. Notable: argos-doppler-shift
+is `82798` (not `397` — `397` is `bird-ring`). Don't trust earlier
+numeric ids elsewhere; the live `/tag_type` is the source of truth.
 
 **Don't make it dynamic.** A "scan the mirror to discover sensor types"
 implementation would behave differently when the mirror is empty (returns
 no rows → `move` errors with "no records found"). Keep the catalogue
-static, even if it occasionally lags Movebank.
+static, even if it occasionally lags Movebank — refresh the table by
+re-running the curl check above when needed.
+
+**Don't reorder the columns.** Live returns columns alphabetically;
+clients (e.g. older `move`) sometimes index by position. Stay
+alphabetical.
+
+---
+
+## Verified live-API behaviours we deliberately *do not* match yet
+
+These are gaps where our server diverges from live, but no current client
+breaks because of it. Listed for visibility; close them if a downstream
+need surfaces.
+
+### Live `/event` rejects `limit=` with HTTP 500 — we silently ignore
+
+Live: `?entity_type=event&...&limit=1` returns
+`HTTP 500 — limit not supported`. Our server returns the full result with
+no limit applied. We're more permissive than the spec, but no client
+relies on the rejection (yet). If we ever add real `limit` support,
+match live by accepting only the documented values.
+
+### Live `/event` with `attributes=all` includes server-derived join columns
+
+Live response columns for `attributes=all` (verified curl):
+```
+individual_id, deployment_id, tag_id, study_id, sensor_type_id,
+individual_local_identifier, tag_local_identifier,
+individual_taxon_canonical_name,
+<eobs_*, ground_speed, heading, height_above_ellipsoid,
+location_lat, location_long, timestamp, visible>,
+event_id
+```
+
+The live API joins server-side against the individuals/tags/study tables
+to embed the human-readable identifiers (`*_local_identifier`,
+`*_taxon_canonical_name`) and the `study_id`. Our response carries
+`tag_id`/`individual_id`/`deployment_id`/`event_id`/`sensor_type_id` but
+*not* the four derived columns. `move` and `move2` happen not to need
+them; other tooling might. Closing this would require adding the joins
+in `EventService` (cheap given the deployment lookup is already done).
+
+### Column order in `/event` responses
+
+Live order: linkage columns first (individual_id, deployment_id, tag_id,
+study_id, sensor_type_id), then derived identifiers, then
+sensor measurements alphabetical, then `event_id`. Our order is
+union-of-source-headers. Both R clients access by name and don't notice;
+position-indexing clients could break.
 
 ---
 

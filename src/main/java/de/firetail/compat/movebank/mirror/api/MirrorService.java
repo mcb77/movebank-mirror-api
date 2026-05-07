@@ -22,19 +22,29 @@ public class MirrorService {
 
     // ── Tag types (static) ─────────────────────────────────────────────────
 
-    // Columns chosen to satisfy move::getMovebankData, which reads `id`, `name`,
-    // and `is_location_sensor`. `external_id` is kept for clients that look it
-    // up (mullet-rest-client / movebank-api-client use it via Constants).
+    // Mirror of the live Movebank /tag_type table (verified 2026-05-07 by
+    // curl against the live API). Columns and order match what live returns:
+    // description, external_id, id, is_location_sensor, name (alphabetical).
+    // IDs match the ones the live API uses; getting this right matters because
+    // some clients look up sensor types by their numeric id, and the move R
+    // package crosses /tag_type with /event's sensor_type_id column.
+    //
+    // 9 sensor types currently catalogued by Movebank. If a new one appears
+    // upstream that you need served locally, add it here.
     private static final String[][] TAG_TYPES = {
-        // id,        name,                  external_id,          is_location_sensor
-        { "397",     "Argos Doppler Shift", "argos-doppler-shift", "true"  },
-        { "2299894", "Bird Ring",           "bird-ring",           "true"  },
-        { "653",     "GPS",                 "gps",                 "true"  },
-        { "673",     "Radio Transmitter",   "radio-transmitter",   "true"  },
-        { "2365683", "Acceleration",        "acceleration",        "false" },
+        // description, external_id,            id,         is_location_sensor, name
+        { "",          "bird-ring",             "397",      "true",  "Bird Ring"             },
+        { "",          "gps",                   "653",      "true",  "GPS"                   },
+        { "",          "radio-transmitter",     "673",      "true",  "Radio Transmitter"     },
+        { "",          "argos-doppler-shift",   "82798",    "true",  "Argos Doppler Shift"   },
+        { "",          "natural-mark",          "2365682",  "true",  "Natural Mark"          },
+        { "",          "acceleration",          "2365683",  "false", "Acceleration"          },
+        { "",          "solar-geolocator",      "3886361",  "true",  "Solar Geolocator"      },
+        { "",          "accessory-measurements","7842954",  "false", "Accessory Measurements"},
+        { "",          "solar-geolocator-raw",  "9301403",  "false", "Solar Geolocator Raw"  },
     };
     private static final String[] TAG_TYPE_HEADER = {
-        "id", "name", "external_id", "is_location_sensor"
+        "description", "external_id", "id", "is_location_sensor", "name"
     };
 
     // ── File helpers ───────────────────────────────────────────────────────
@@ -143,30 +153,60 @@ public class MirrorService {
                     rows.add(s.study);
             }
         }
-        writeMaps(rows, csv);
+        writeMaps(rows, csv, parseAttributes(params.get("attributes")));
     }
 
     public void writeTags(Map<String, String> params, CSVWriter csv) throws IOException {
         StudyJson study = loadStudy(params.get("study_id"));
         if (study == null) return;
-        writeMaps(study.tags, csv);
+        writeMaps(study.tags, csv, parseAttributes(params.get("attributes")));
     }
 
     public void writeIndividuals(Map<String, String> params, CSVWriter csv) throws IOException {
         StudyJson study = loadStudy(params.get("study_id"));
         if (study == null) return;
-        writeMaps(study.individuals, csv);
+        writeMaps(study.individuals, csv, parseAttributes(params.get("attributes")));
     }
+
+    /**
+     * Live Movebank's {@code /deployment} endpoint omits the three
+     * relational-linkage columns ({@code id}, {@code tag_id},
+     * {@code individual_id}) when the request does not pass an explicit
+     * {@code attributes=…}. Our mirror merges them in (see
+     * {@code MovebankMirror.getAllDeploymentRefDataForStudy}, which does two
+     * API roundtrips precisely to capture them), so the on-disk JSON has
+     * them — but emitting them by default breaks {@code move2}'s
+     * {@code movebank_download_deployment}, whose first {@code left_join}
+     * would collide on {@code individual_id} between the unfiltered
+     * deployment fetch and the {@code attributes=id,tag_id,individual_id}
+     * fetch. Drop them when no projection is requested to match the live
+     * API's shape.
+     */
+    private static final List<String> DEPLOYMENT_LINKAGE_COLUMNS =
+            List.of("tag_id", "individual_id");
 
     public void writeDeployments(Map<String, String> params, CSVWriter csv) throws IOException {
         StudyJson study = loadStudy(params.get("study_id"));
         if (study == null) return;
         String tagId        = params.get("tag_id");
         String individualId = params.get("individual_id");
+        List<String> requestedAttrs = parseAttributes(params.get("attributes"));
         List<Map<String, String>> rows = study.deployments;
         if (tagId != null)        rows = rows.stream().filter(r -> tagId.equals(r.get("tag_id"))).toList();
         if (individualId != null) rows = rows.stream().filter(r -> individualId.equals(r.get("individual_id"))).toList();
-        writeMaps(rows, csv);
+
+        // Live-Movebank quirk: when no attributes= is requested, the linkage
+        // columns are not in the response. See DEPLOYMENT_LINKAGE_COLUMNS above
+        // and BUG_COMPATIBILITY.md.
+        if (requestedAttrs == null) {
+            rows = rows.stream().map(r -> {
+                Map<String, String> copy = new LinkedHashMap<>(r);
+                DEPLOYMENT_LINKAGE_COLUMNS.forEach(copy::remove);
+                return copy;
+            }).toList();
+        }
+
+        writeMaps(rows, csv, requestedAttrs);
     }
 
     public void writeSensors(Map<String, String> params, CSVWriter csv) throws IOException {
@@ -174,7 +214,24 @@ public class MirrorService {
         String studyId = params.getOrDefault("study_id", params.get("tag_study_id"));
         StudyJson study = loadStudy(studyId);
         if (study == null) return;
-        writeMaps(study.sensors, csv);
+        writeMaps(study.sensors, csv, parseAttributes(params.get("attributes")));
+    }
+
+    /**
+     * Parses a comma-separated attribute list. Returns null when absent/empty
+     * or when the value is the special token {@code "all"} — Movebank's live
+     * API treats {@code attributes=all} as "every column from the source",
+     * which matches our default no-projection behaviour.
+     */
+    static List<String> parseAttributes(String csv) {
+        if (csv == null || csv.isEmpty()) return null;
+        if ("all".equalsIgnoreCase(csv.trim())) return null;
+        List<String> out = new ArrayList<>();
+        for (String token : csv.split(",")) {
+            String t = token.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out.isEmpty() ? null : out;
     }
 
     public void writeStudyAttributes(Map<String, String> params, CSVWriter csv) throws IOException {
@@ -197,10 +254,26 @@ public class MirrorService {
     // ── CSV helper ─────────────────────────────────────────────────────────
 
     private void writeMaps(List<Map<String, String>> rows, CSVWriter csv) {
+        writeMaps(rows, csv, null);
+    }
+
+    /**
+     * Writes the rows as CSV. When {@code requestedAttrs} is non-null, the
+     * output is projected to exactly those columns in that order; columns not
+     * in the source are emitted as empty strings. When null, the union of all
+     * source keys (in first-seen order) is used.
+     */
+    private void writeMaps(List<Map<String, String>> rows, CSVWriter csv,
+                           List<String> requestedAttrs) {
         if (rows == null || rows.isEmpty()) return;
-        Set<String> keys = new LinkedHashSet<>();
-        for (Map<String, String> row : rows) keys.addAll(row.keySet());
-        String[] header = keys.toArray(new String[0]);
+        String[] header;
+        if (requestedAttrs != null) {
+            header = requestedAttrs.toArray(new String[0]);
+        } else {
+            Set<String> keys = new LinkedHashSet<>();
+            for (Map<String, String> row : rows) keys.addAll(row.keySet());
+            header = keys.toArray(new String[0]);
+        }
         csv.writeNext(header, false);
         for (Map<String, String> row : rows) {
             String[] values = new String[header.length];

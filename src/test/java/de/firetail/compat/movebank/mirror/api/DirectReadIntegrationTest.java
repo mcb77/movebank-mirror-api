@@ -42,15 +42,18 @@ class DirectReadIntegrationTest {
         String csv = rest.getForObject("/movebank/service/direct-read?entity_type=tag_type", String.class);
         List<String[]> rows = parseCsv(csv);
 
-        // Header chosen to match what move::getMovebankData expects:
-        // {id, name, external_id, is_location_sensor}.
-        assertEquals(new String[]{"id", "name", "external_id", "is_location_sensor"}[0], rows.get(0)[0]);
-        assertEquals("name", rows.get(0)[1]);
-        assertEquals("external_id", rows.get(0)[2]);
+        // Header matches the live Movebank /tag_type schema exactly — five
+        // columns in alphabetical order (description, external_id, id,
+        // is_location_sensor, name). Order verified by curl against live.
+        assertEquals("description", rows.get(0)[0]);
+        assertEquals("external_id", rows.get(0)[1]);
+        assertEquals("id", rows.get(0)[2]);
         assertEquals("is_location_sensor", rows.get(0)[3]);
-        assertEquals(6, rows.size(), "1 header + 5 hardcoded sensor types");
+        assertEquals("name", rows.get(0)[4]);
+        assertEquals(10, rows.size(), "1 header + 9 hardcoded sensor types");
+        // GPS row: id=653, external_id=gps, is_location_sensor=true, name=GPS.
         assertTrue(rows.stream().anyMatch(r ->
-                "653".equals(r[0]) && "GPS".equals(r[1]) && "gps".equals(r[2]) && "true".equals(r[3])));
+                "gps".equals(r[1]) && "653".equals(r[2]) && "true".equals(r[3]) && "GPS".equals(r[4])));
     }
 
     @Test

@@ -9,9 +9,10 @@ Each subdirectory targets one client and runs a small, opinionated set of
 calls that real users actually make. Scripts exit with code 0 on success
 and non-zero on any failure, so they can be wired into release gates.
 
-| Client                                                | Language | Directory                  | Status |
-|-------------------------------------------------------|----------|----------------------------|--------|
-| [`move`](https://cran.r-project.org/package=move)     | R        | [`move-r/`](move-r/)       | scaffolded |
+| Client                                                | Language | Directory                    | Status |
+|-------------------------------------------------------|----------|------------------------------|--------|
+| [`move`](https://cran.r-project.org/package=move)     | R        | [`move-r/`](move-r/)         | 4/4 ✅ (against `move` 4.2.7, study 2911040) |
+| [`move2`](https://cran.r-project.org/package=move2)   | R        | [`move2-r/`](move2-r/)       | 4/4 ✅ (against `move2` 0.5.0, study 2911040) |
 
 ## Adding a check for a new client
 

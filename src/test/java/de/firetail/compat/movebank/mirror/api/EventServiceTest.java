@@ -223,6 +223,32 @@ class EventServiceTest {
     }
 
     @Test
+    void attributesEqualsAllSkipsProjection() throws Exception {
+        // move2::movebank_download_study sends `attributes=all`. The Movebank
+        // live API treats that as "every column from the source"; we must do
+        // the same, not project to a one-column "all" filter.
+        StringWriter sw = new StringWriter();
+        try (CSVWriter csv = new CSVWriter(sw)) {
+            Map<String, String> p = new LinkedHashMap<>();
+            p.put("study_id", STUDY_ID);
+            p.put("sensor_sensor_type_id", SENSOR_TYPE);
+            p.put("attributes", "all");
+            eventService.writeEvents(p, csv);
+        }
+        try (CSVReader r = new CSVReader(new StringReader(sw.toString()))) {
+            String[] header = r.readNext();
+            // Source CSV columns + the four synthetic ones.
+            assertTrue(java.util.Arrays.asList(header).contains("timestamp"));
+            assertTrue(java.util.Arrays.asList(header).contains("location_lat"));
+            assertTrue(java.util.Arrays.asList(header).contains("event_id"));
+            assertTrue(java.util.Arrays.asList(header).contains("tag_id"));
+            int rows = 0;
+            while (r.readNext() != null) rows++;
+            assertEquals(6, rows);
+        }
+    }
+
+    @Test
     void attributesProjectionEmitsNaForUnknownColumns() throws Exception {
         // A column the source CSV doesn't have should be filled with "NA",
         // not an empty string — empty strings crash R's read.csv when the
