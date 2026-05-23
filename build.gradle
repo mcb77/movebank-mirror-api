@@ -19,6 +19,17 @@ java {
     }
 }
 
+// Read by ManifestVersionProvider at runtime so `bin/movebank-mirror-api
+// --version` tracks project.version without hand-editing the
+// @Command(version=...) string on every release.
+// Applied to all Jar tasks (jar + bootJar); Spring Boot's bootJar
+// doesn't inherit attributes from the regular jar by default.
+tasks.withType(Jar).configureEach {
+    manifest {
+        attributes('Implementation-Version': project.version)
+    }
+}
+
 repositories {
     mavenCentral()
 }

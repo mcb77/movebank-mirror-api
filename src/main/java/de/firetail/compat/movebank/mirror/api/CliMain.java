@@ -13,7 +13,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "movebank-mirror-api",
         mixinStandardHelpOptions = true,
-        version = "movebank-mirror-api 0.0.2",
+        versionProvider = ManifestVersionProvider.class,
         description = "Read-only Movebank REST API replay backed by a local movebank-mirror directory."
 )
 public class CliMain implements Callable<Integer> {
