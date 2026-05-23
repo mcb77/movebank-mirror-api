@@ -1,5 +1,9 @@
 # movebank-mirror-api
 
+[![CI](https://github.com/mcb77/movebank-mirror-api/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mcb77/movebank-mirror-api/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/mcb77/movebank-mirror-api)](https://github.com/mcb77/movebank-mirror-api/releases)
+[![license](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
+
 A read-only HTTP server that **replays** the [Movebank REST API (v1)](https://github.com/movebank/movebank-api-doc/blob/master/movebank-api.md)
 on top of a local on-disk mirror produced by [`movebank-mirror`](https://github.com/mcb77/movebank-mirror).
 
