@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'de.firetail.compat.movebank'
-version = '0.0.1'
+version = '0.0.2'
 description = 'Read-only Movebank REST API replay backed by a local movebank-mirror directory.'
 
 base {
@@ -27,7 +27,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'com.opencsv:opencsv:5.9'
     implementation 'info.picocli:picocli:4.7.6'
-    implementation 'de.firetail.compat.movebank:movebank-mirror:0.0.1'
+    implementation 'de.firetail.compat.movebank:movebank-mirror:0.0.2'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly  'org.junit.platform:junit-platform-launcher'
