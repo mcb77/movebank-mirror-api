@@ -342,7 +342,14 @@ public class EventService {
             return d.isDirectory() ? List.of(d) : Collections.emptyList();
         }
         File[] dirs = studyDir.listFiles(File::isDirectory);
-        return dirs != null ? Arrays.asList(dirs) : Collections.emptyList();
+        if (dirs == null) return Collections.emptyList();
+        // File.listFiles() returns filesystem-iteration order (not
+        // guaranteed alphabetical). Tests that assert on row order would
+        // pass on machines whose ext4 happens to return dirs in name
+        // order and fail on ones that don't (e.g. CI runners on
+        // overlayfs / other directory layouts). Sort defensively.
+        Arrays.sort(dirs);
+        return Arrays.asList(dirs);
     }
 
     private static String eventTimestamp(String[] row, int tsIdx) {
