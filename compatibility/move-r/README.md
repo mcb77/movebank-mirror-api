@@ -93,27 +93,44 @@ docker run --rm --network=host \
   -v $PWD:/work:ro \
   -e MOVEBANK_MIRROR_API_URL=http://127.0.0.1:8080/movebank \
   -e STUDY_ID=2911040 \
+  -w /work \
   rocker/geospatial \
-  bash -c 'Rscript -e "install.packages(\"move\", quiet=TRUE)" && Rscript /work/verify.R'
+  bash -c 'Rscript -e "install.packages(\"move\", quiet=TRUE)" && Rscript verify.R'
 ```
+
+(`verify.R` `source()`s `url_shim.R` from its own directory, so the
+container's working directory must be the script's directory — that's
+what `-w /work` ensures when you run from this directory on the host.)
 
 (`rocker/geospatial` is a ~4 GB image with the full r-spatial stack
 preinstalled — `move` itself isn't bundled but installs cleanly on top.)
 
-## URL override caveat
+## URL override (`url_shim.R`)
 
-The `move` package historically hardcodes the live Movebank URL in some
-helpers. The script tries two override paths in order: an `options()` hook
-(`move_movebank_api_url`) and, if present, a slot on the login object. If
-your installed `move` version routes through neither, the script will hit
-the live API and the first check will surface a credential error.
+The `move` package hardcodes the live Movebank URL inside `getMovebank`'s
+function body — there's no public override. `url_shim.R` works around
+this by monkey-patching `httr::GET` to rewrite the hardcoded base URL on
+the way out, in both `httr`'s own namespace and `move`'s imports
+environment (the two paths `GET` reaches `move` through).
 
-Workarounds when that happens:
+The shim is sourced from `verify.R` automatically. If you want to use it
+from your own script, the pattern is:
 
-1. Patch the script's `override_url()` helper to set whatever your `move`
-   version expects (file an issue with the call shape so we can fold it in).
-2. As a last resort, run the verification through `httptest`/`vcr` recording
-   to intercept calls — but that's heavier than this script wants to be.
+```r
+source("url_shim.R")
+login <- movebankLogin(username = "ignored", password = "ignored")
+override_url(login, "http://localhost:8080/movebank")
+# now any move::* call routes to the replay server
+```
+
+Set `VERIFY_TRACE=1` in the environment to log every rewritten URL to
+stderr — useful when chasing a regression.
+
+The patch depends on `move`'s internal name `GET`. If a future `move`
+version renames or restructures its HTTP calls and the shim can no
+longer locate `GET` in either namespace, it emits a warning and the
+first check will fail at credential lookup. File an issue with the
+installed `move` version and the call shape if that happens.
 
 ## Snapshot fixtures (optional)
 
