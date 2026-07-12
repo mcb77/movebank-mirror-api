@@ -11,8 +11,12 @@ and non-zero on any failure, so they can be wired into release gates.
 
 | Client                                                | Language | Directory                    | Status |
 |-------------------------------------------------------|----------|------------------------------|--------|
-| [`move`](https://cran.r-project.org/package=move)     | R        | [`move-r/`](move-r/)         | 4/4 ✅ (against `move` 4.2.7, study 2911040) |
-| [`move2`](https://cran.r-project.org/package=move2)   | R        | [`move2-r/`](move2-r/)       | 4/4 ✅ (against `move2` 0.5.0, study 2911040) |
+| [`move`](https://cran.r-project.org/package=move)     | R        | [`move-r/`](compat/move-r/)         | 4/4 ✅ (against `move` 4.2.7, study 2911040) |
+| [`move2`](https://cran.r-project.org/package=move2)   | R        | [`move2-r/`](compat/move2-r/)       | 4/4 ✅ (against `move2` 0.5.0, study 2911040) |
+
+For a visual, interactive version of the same thing — the `move`/`move2` code
+running offline against the mirror and plotting the tracks — see
+[`demo/`](demo/).
 
 ## Adding a check for a new client
 

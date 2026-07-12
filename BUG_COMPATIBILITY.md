@@ -46,7 +46,7 @@ test, don't refactor it away.
 ## Verification gate
 
 Every change to `EventService` / `MirrorService` / `DirectReadController`
-must pass [`compatibility/move-r/verify.R`](compatibility/move-r/) before
+must pass [`compatibility/move-r/verify.R`](compatibility/compat/move-r/) before
 release. That script is the regression suite for bug-compat. It currently
 covers `getMovebank("study")`, `getMovebankAnimals`, `getMovebankSensors`,
 and `getMovebankData` against a populated mirror.

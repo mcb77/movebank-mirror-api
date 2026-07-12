@@ -2,14 +2,14 @@
 
 ## Known gaps (the 20%)
 
-Closed in v0.0.1 (verified by [`compatibility/move-r/`](compatibility/move-r/)):
+Closed in v0.0.1 (verified by [`compatibility/move-r/`](compatibility/compat/move-r/)):
 
 - ~~`event` without `sensor_type_id`~~ — server now enumerates every sensor type in the study's metadata when no sensor type is specified.
 - ~~`attributes` projection~~ — response is now projected to the requested columns in the requested order; missing-from-source columns emit `NA`.
 - ~~CSV-list parameters~~ — `sensor_type_id`, `individual_id`, and `deployment_id` accept either a single id or a comma-separated list.
 - ~~event row enrichment~~ — `tag_id`, `individual_id`, `deployment_id`, and a synthetic `event_id` are injected per row from the directory layout + deployment-window lookup.
 
-Closed for `move2` 0.5.0 compatibility (verified by [`compatibility/move2-r/`](compatibility/move2-r/)):
+Closed for `move2` 0.5.0 compatibility (verified by [`compatibility/move2-r/`](compatibility/compat/move2-r/)):
 
 - ~~`attributes=all` was treated as a literal one-column projection~~ — now recognised as the live API's "no projection" sentinel.
 - ~~`/deployment` exposed `tag_id` and `individual_id` by default~~ — now dropped unless explicitly requested via `attributes=…`, matching the live API's behaviour. (Required for `move2::movebank_download_deployment`'s join pipeline.)

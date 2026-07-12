@@ -86,8 +86,8 @@ against a tmp mirror). A failing test here is a release blocker.
 ### 2.5 Run the R-client regression suite
 
 The compatibility harness lives at
-[`compatibility/move-r/`](compatibility/move-r/) and
-[`compatibility/move2-r/`](compatibility/move2-r/). Both must pass
+[`compatibility/move-r/`](compatibility/compat/move-r/) and
+[`compatibility/move2-r/`](compatibility/compat/move2-r/). Both must pass
 before tagging.
 
 ```bash

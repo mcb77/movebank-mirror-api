@@ -67,7 +67,7 @@ Last verified against `move2` 0.5.0 (rocker/geospatial container) and study
 sensor in the study, joined with individual / tag / deployment metadata.
 
 Reaching 4/4 added two compatibility behaviours beyond what `move` v1
-required (full list in [`BUG_COMPATIBILITY.md`](../../BUG_COMPATIBILITY.md)):
+required (full list in [`BUG_COMPATIBILITY.md`](../../../BUG_COMPATIBILITY.md)):
 
 - **`attributes=all` is treated as no projection.** `move2` defaults to
   `attributes="all"` for full study downloads; the live API treats that
