@@ -14,6 +14,6 @@ albatrosses <- movebank_download_study(2911040)   # reads local mirror, not the 
 
 ggplot() +
   geom_sf(data = ne_countries(scale = "medium", returnclass = "sf"), fill = "grey90") +
-  geom_sf(data = albatrosses, aes(color = mt_track_id(albatrosses)), size = 0.1) +
+  geom_sf(data = albatrosses, aes(color = factor(mt_track_id(albatrosses))), size = 0.1) +
   coord_sf(xlim = c(-95, -75), ylim = c(-15, 5)) +
   guides(color = "none") + theme_minimal()
