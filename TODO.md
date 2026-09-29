@@ -5,7 +5,7 @@
 Closed in v0.0.1 (verified by [`compatibility/move-r/`](compatibility/compat/move-r/)):
 
 - ~~`event` without `sensor_type_id`~~ — server now enumerates every sensor type in the study's metadata when no sensor type is specified.
-- ~~`attributes` projection~~ — response is now projected to the requested columns in the requested order; missing-from-source columns emit `NA`.
+- ~~`attributes` projection~~ — response is now projected to the requested columns in the requested order; missing-from-source columns are empty, as live sends them.
 - ~~CSV-list parameters~~ — `sensor_type_id`, `individual_id`, and `deployment_id` accept either a single id or a comma-separated list.
 - ~~event row enrichment~~ — `tag_id`, `individual_id`, `deployment_id`, and a synthetic `event_id` are injected per row from the directory layout + deployment-window lookup.
 

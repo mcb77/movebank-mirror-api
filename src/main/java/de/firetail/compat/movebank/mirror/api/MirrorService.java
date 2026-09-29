@@ -80,9 +80,11 @@ public class MirrorService {
      * for studies with many individuals. Both are optional; passing neither returns
      * every deployment in the study.
      * <p>
-     * The time window is taken from {@code deploy_on_timestamp} /
-     * {@code deploy_off_timestamp}, falling back to {@code timestamp_start} /
-     * {@code timestamp_end} if those are blank (as observed in some mirror data).
+     * The time window is {@code deploy_on_timestamp} / {@code deploy_off_timestamp}; a blank
+     * bound is open. {@code timestamp_start} / {@code timestamp_end} are not used: they are the
+     * first and last located fix, and live Movebank assigns the deployment to events outside
+     * them too (measured 2026-09-29, study 2911040: this rule matches live's deployment_id on
+     * all 114,929 events; the old fallback left 99 undeployed).
      */
     public List<DeploymentWindow> getDeploymentWindows(
             String studyId, String individualId, String deploymentId) throws IOException {
@@ -98,8 +100,8 @@ public class MirrorService {
             if (!deploymentIds.isEmpty() && !deploymentIds.contains(d.get("id")))           continue;
             String tagId = d.get("tag_id");
             if (tagId == null || tagId.isBlank()) continue;
-            String from = firstNonBlank(d.get("deploy_on_timestamp"),  d.get("timestamp_start"));
-            String to   = firstNonBlank(d.get("deploy_off_timestamp"), d.get("timestamp_end"));
+            String from = firstNonBlank(d.get("deploy_on_timestamp"));
+            String to   = firstNonBlank(d.get("deploy_off_timestamp"));
             windows.add(new DeploymentWindow(
                     tagId, d.get("individual_id"), d.get("id"), from, to));
         }

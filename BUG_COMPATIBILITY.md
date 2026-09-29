@@ -22,7 +22,7 @@ Three reasons:
 
 1. **The clients depend on undocumented behaviour.** The R `move` package
    accesses response columns by name and position. It assumes specific column
-   orders, accepts specific value formats (`NA` for missing, `true`/`false`
+   orders, accepts specific value formats (unquoted empty for missing, `true`/`false`
    for booleans), and looks up some columns that the official API docs don't
    mention as guaranteed (`tag_type.is_location_sensor`). Cleaning up our
    response to match the docs would break `move`.
@@ -98,7 +98,7 @@ rename, don't drop columns.
 
 **Live behaviour.** When the caller sends `attributes=col1,col2,col3`, the
 response columns appear in **exactly that order**, with **exactly those
-names**. Columns not in the source data appear as `NA`.
+names**. Columns not in the source data appear empty.
 
 **Why it matters.** `move` uses `colClasses` indexed by name in
 `read.csv` and downstream code does positional `df[, k]` access. Any
@@ -115,34 +115,53 @@ matters; the name set matters.
 
 ---
 
-### Missing values are `NA`, not empty string
+### Missing values are empty, not `NA`
 
-**Live behaviour.** Movebank emits `NA` (the literal two characters) for
-missing values in numeric columns.
+**Live behaviour.** Movebank sends a missing value as an empty, unquoted
+field. Measured 2026-09-29 against study 2911040 with the exact `/event`
+requests of `move::getMovebankData` (16,414 rows) and
+`move2::movebank_download_study` (`attributes=all`, 114,929 rows): no `NA`
+anywhere, empty fields throughout (e.g. `location_lat` of GPS rows without a
+fix, every GPS column of acceleration rows). An earlier version of this file
+said live emits `NA`; that was wrong, and so was our output.
 
-**Why it matters.** R's `read.csv` defaults `na.strings = "NA"`. Empty
-strings become parse errors when `colClasses` declares the column numeric:
-`scan() expected 'a real', got ''`. `move` always asks for
-`location_lat` / `location_long` as numeric.
+**Why it matters.** A raw `diff` against live only comes out empty with the
+same encoding. R copes with both: `read.csv` reads an *unquoted* empty field
+in a numeric column as `NA`. What breaks it is a *quoted* empty field:
+`scan() expected 'a real', got '""'` (checked with R, 2026-09-29) — see the
+next entry.
 
-**Where we encode it.** `EventService.java` — `streamCsvFiles` projection
-block emits `"NA"` when the source row is missing the value, and `safe(...)`
-returns `"NA"` for null/empty values from deployment metadata.
+**Where we encode it.** `EventService.java` — the `streamCsvFiles`
+projection block emits `""` when the source row is missing the value (a
+source value of `NA`, from older mirrors, is treated as missing), and
+`safe(...)` / `synthetic(...)` / `augmentRow(...)` emit `""` when no
+deployment covers the row.
+
+---
+
+### CRLF line endings
+
+**Live behaviour.** Every direct-read response ends its lines with `\r\n`
+(measured 2026-09-29, all entity types we request).
+
+**Where we encode it.** `DirectReadController` builds the `CSVWriter` with
+`"\r\n"` as line end (OpenCSV's default is `\n`).
 
 ---
 
 ### Don't quote values that don't need quoting
 
-**Live behaviour.** Movebank's CSV output quotes only values that contain
-the field separator, the quote character, or a newline. Plain values appear
-unquoted.
+**Live behaviour.** Movebank's CSV output leaves numbers, timestamps,
+booleans and empty fields unquoted. It *does* quote values of
+`string`-typed attributes (`data_type` in `study_attribute`), e.g.
+`eobs_status` → `"A"`, and the text join columns of `attributes=all`
+(`individual_local_identifier`, …) — measured 2026-09-29. We don't
+replicate that part yet (see "Quoting of string-typed values" below).
 
 **Why it matters.** OpenCSV's default `applyQuotesToAll=true` quotes every
-value, so `NA` comes out as the four characters `"NA"` (i.e. the cell value
-literally contains the `"` characters after CSV unquoting). R's
-`na.strings = "NA"` matches the unquoted literal `NA`, not the four-character
-string `"NA"`. With universal quoting, every numeric column whose source
-is missing crashes `read.csv`.
+value, so a missing value comes out as `""`, which `read.csv` rejects in a
+numeric column (`scan() expected 'a real', got '""'`). With universal
+quoting, every numeric column whose source is missing crashes `read.csv`.
 
 **Where we encode it.** Every `csv.writeNext(...)` call in `EventService`
 and `MirrorService` passes `false` as the `applyQuotesToAll` argument.
@@ -232,9 +251,17 @@ no alternative source, so the mirror requests it explicitly.
    the per-study JSON).
 2. For each event row, finds the deployment window that contains the
    row's `timestamp` on the row's tag. Emits `individual_id` and
-   `deployment_id` from that window's record. (`"NA"` if no window
-   covers the timestamp — happens for events outside any recorded
-   deployment.)
+   `deployment_id` from that window's record (empty if no window
+   covers the timestamp). The window is `deploy_on_timestamp` …
+   `deploy_off_timestamp`, a blank bound being open — **not**
+   `timestamp_start` / `timestamp_end`, which are the first and last
+   located fix. Live assigns the deployment to events outside those too
+   (fixless GPS rows, acceleration bursts): measured 2026-09-29 on study
+   2911040, the deploy_on/off rule reproduces live's `deployment_id` on
+   all 114,929 events, the old `timestamp_start`/`_end` fallback left 99
+   of them undeployed (and `move2` dropped them with a warning). Every
+   tag in that study has one deployment, so tags with several
+   deployments are untested.
 3. Uses the tag directory name as `tag_id`.
 4. For `event_id`: prefers the value the CSV carries (mirrors made
    with `movebank-mirror` ≥ 0.0.2 carry it). Falls back to a
@@ -346,6 +373,27 @@ That's the live API's rule. Replicate it unconditionally.
 
 ---
 
+### `/event` row order: sensor type, individual, timestamp
+
+**Live behaviour.** `/event` rows come sorted by `sensor_type_id`
+(numeric: 653 before 2365683), then `individual_id`, then `timestamp` —
+whatever order the request lists `individual_id`s or sensor types in.
+Measured 2026-09-29 on three requests (`move`'s, `move2`'s
+`attributes=all`, and a plain single-individual GPS request).
+
+**Where we encode it.** `EventService.writeEvents` sorts the sensor types
+with `compareIds` (numeric); `byIndividual(...)` orders the tag folders by
+the individual their deployment belongs to, and `writeEventsForDeployments`
+sorts the windows the same way. Rows within a tag come from the CSV files in
+filename order, which is chronological. No in-memory sort: the response
+stays streamed.
+
+**Untested:** ties on the timestamp (4 in that study, which came out in
+live's order), and one individual carried by several tags (would need a
+merge across tag folders, not folder-by-folder streaming).
+
+---
+
 ### `tag_type` is hard-coded, not derived
 
 **Live behaviour.** Movebank's tag-type catalogue is a small, fixed table.
@@ -403,6 +451,15 @@ to embed the human-readable identifiers (`*_local_identifier`,
 *not* the four derived columns. `move` and `move2` happen not to need
 them; other tooling might. Closing this would require adding the joins
 in `EventService` (cheap given the deployment lookup is already done).
+
+### Quoting of string-typed values
+
+Live quotes the values of `string`-typed attributes (see "Don't quote
+values that don't need quoting"); we quote none. It's the only difference
+left between our response and live's for `move`'s exact `/event` request
+(measured 2026-09-29). Matching it needs each attribute's `data_type`,
+which the mirror doesn't store today (our `study_attribute.data_type` is
+empty), so it starts in `movebank-mirror`.
 
 ### Column order in `/event` responses
 

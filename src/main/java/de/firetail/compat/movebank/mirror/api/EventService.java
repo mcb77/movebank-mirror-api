@@ -61,6 +61,8 @@ public class EventService {
         List<String> sensorTypeIds = new ArrayList<>(MirrorService.csvToSet(sensorTypeId));
         if (sensorTypeIds.isEmpty()) sensorTypeIds = sensorTypesForStudy(studyId);
         if (sensorTypeIds.isEmpty()) return;
+        // Live order: sensor type (numeric), then individual, then timestamp.
+        sensorTypeIds.sort(EventService::compareIds);
 
         // When the caller didn't specify an attribute projection, synthesise one
         // from the union of every source CSV's columns plus the synthetic
@@ -91,7 +93,7 @@ public class EventService {
                         effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
             } else {
                 headerWritten = streamCsvFiles(
-                        tagDirs(studyDir, tagId), stid, null, csv,
+                        byIndividual(tagDirs(studyDir, tagId), deploymentsByTag), stid, null, csv,
                         effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
             }
         }
@@ -173,7 +175,10 @@ public class EventService {
         List<DeploymentWindow> windows =
                 mirrorService.getDeploymentWindows(studyId, individualId, deploymentId);
 
-        // Group windows by tag to avoid reading the same CSV files multiple times
+        // Group windows by tag to avoid reading the same CSV files multiple times;
+        // tags in individual order, as live sends them
+        windows = new ArrayList<>(windows);
+        windows.sort((a, b) -> compareIds(a.individualId(), b.individualId()));
         Map<String, List<DeploymentWindow>> windowsByTag = new LinkedHashMap<>();
         for (DeploymentWindow w : windows)
             windowsByTag.computeIfAbsent(w.tagId(), k -> new ArrayList<>()).add(w);
@@ -261,10 +266,8 @@ public class EventService {
                                     projected[i] = fromSource;
                                 } else {
                                     String syn = synthetic(name, currentTagId, active, eventId);
-                                    // "NA" (R's default na.strings) for columns absent
-                                    // from this sensor's CSV — empty strings would crash
-                                    // read.csv when colClasses declares the column numeric.
-                                    projected[i] = (syn != null) ? syn : "NA";
+                                    // Empty, as live Movebank sends missing values.
+                                    projected[i] = (syn != null) ? syn : "";
                                 }
                             }
                             csv.writeNext(projected, false);
@@ -280,14 +283,14 @@ public class EventService {
     private static String synthetic(String colName, String tagId, DeploymentWindow active, long eventId) {
         switch (colName) {
             case "tag_id":        return tagId;
-            case "individual_id": return active != null ? safe(active.individualId()) : "NA";
-            case "deployment_id": return active != null ? safe(active.deploymentId()) : "NA";
+            case "individual_id": return active != null ? safe(active.individualId()) : "";
+            case "deployment_id": return active != null ? safe(active.deploymentId()) : "";
             case "event_id":      return Long.toString(eventId);
             default:              return null;
         }
     }
 
-    private static String safe(String s) { return (s == null || s.isEmpty()) ? "NA" : s; }
+    private static String safe(String s) { return s == null ? "" : s; }
 
     /** Locates the deployment window covering {@code ts}, or null if none. */
     private static DeploymentWindow findActive(List<DeploymentWindow> windows, String ts) {
@@ -319,8 +322,8 @@ public class EventService {
         // declaration order in Java 21? No — Set.of returns an immutable set with implementation-
         // defined order. To stay deterministic, list the columns in a fixed sequence here.
         out[i++] = tagId;
-        out[i++] = active != null ? safe(active.individualId()) : "NA";
-        out[i++] = active != null ? safe(active.deploymentId()) : "NA";
+        out[i++] = active != null ? safe(active.individualId()) : "";
+        out[i++] = active != null ? safe(active.deploymentId()) : "";
         out[i]   = Long.toString(eventId);
         return out;
     }
@@ -350,6 +353,29 @@ public class EventService {
         // overlayfs / other directory layouts). Sort defensively.
         Arrays.sort(dirs);
         return Arrays.asList(dirs);
+    }
+
+    /**
+     * Tag folders in the order of the individual each tag is deployed on (its first
+     * deployment's individual); tags without one go last, in tag order.
+     */
+    private static List<File> byIndividual(List<File> dirs, Map<String, List<DeploymentWindow>> deploymentsByTag) {
+        List<File> out = new ArrayList<>(dirs);
+        out.sort(Comparator.comparing((File d) -> {
+            List<DeploymentWindow> ws = deploymentsByTag.get(d.getName());
+            return ws == null || ws.isEmpty() ? null : ws.get(0).individualId();
+        }, Comparator.nullsLast(EventService::compareIds)).thenComparing(File::getName, EventService::compareIds));
+        return out;
+    }
+
+    /** Numeric order for Movebank ids (digit strings); anything else falls back to text order. */
+    static int compareIds(String a, String b) {
+        boolean na = a != null && a.matches("\\d+"), nb = b != null && b.matches("\\d+");
+        if (na && nb) {
+            String x = a.replaceFirst("^0+(?=.)", ""), y = b.replaceFirst("^0+(?=.)", "");
+            return x.length() != y.length() ? Integer.compare(x.length(), y.length()) : x.compareTo(y);
+        }
+        return String.valueOf(a).compareTo(String.valueOf(b));
     }
 
     private static String eventTimestamp(String[] row, int tsIdx) {

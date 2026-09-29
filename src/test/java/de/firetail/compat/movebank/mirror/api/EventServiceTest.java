@@ -249,10 +249,9 @@ class EventServiceTest {
     }
 
     @Test
-    void attributesProjectionEmitsNaForUnknownColumns() throws Exception {
-        // A column the source CSV doesn't have should be filled with "NA",
-        // not an empty string — empty strings crash R's read.csv when the
-        // column is declared numeric via colClasses.
+    void attributesProjectionEmitsEmptyForUnknownColumns() throws Exception {
+        // A column the source CSV doesn't have is empty, as live Movebank
+        // sends missing values (measured 2026-09-29).
         StringWriter sw = new StringWriter();
         try (CSVWriter csv = new CSVWriter(sw)) {
             Map<String, String> p = new LinkedHashMap<>();
@@ -263,7 +262,7 @@ class EventServiceTest {
         }
         try (CSVReader r = new CSVReader(new StringReader(sw.toString()))) {
             assertArrayEquals(new String[]{"timestamp", "does_not_exist"}, r.readNext());
-            assertArrayEquals(new String[]{JAN, "NA"}, r.readNext());
+            assertArrayEquals(new String[]{JAN, ""}, r.readNext());
         }
     }
 

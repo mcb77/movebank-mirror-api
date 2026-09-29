@@ -39,8 +39,11 @@ public class DirectReadController {
         }
 
         response.setContentType("text/csv;charset=UTF-8");
+        // CRLF line ends, as live Movebank sends them
         try (CSVWriter csv = new CSVWriter(
-                new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8))) {
+                new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8),
+                CSVWriter.DEFAULT_SEPARATOR, CSVWriter.DEFAULT_QUOTE_CHARACTER,
+                CSVWriter.DEFAULT_ESCAPE_CHARACTER, "\r\n")) {
             switch (entityType) {
                 case "study"           -> mirrorService.writeStudies(params, csv);
                 case "tag"             -> mirrorService.writeTags(params, csv);
