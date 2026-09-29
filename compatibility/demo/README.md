@@ -14,8 +14,11 @@ tracked individuals.
 | `move2_pane.R`  | `move2`  | `ggplot`/`sf` map — multicolour tracks over the E Pacific |
 | `move_pane.R`   | `move`   | base-graphics `plot` of the same `MoveStack`             |
 
-`move2_pane.R` has *nothing* mirror-specific in it — the redirect comes from the
-container's baked `.Rprofile`. `move_pane.R` sources `url_shim.R` from the compat
+`move2_pane.R` has *nothing* mirror-specific in it — not even a comment: it is
+deliberately a plain script, as you'd write it against the live API. The
+redirect comes from the container's baked `.Rprofile`, which sets
+`options(move2_movebank_api_url = ...)`. (The release-gate version of the same
+check is `../compat/move2-r/verify.R`.) `move_pane.R` sources `url_shim.R` from the compat
 harness (mounted at `/work/move-r/`) because `move` v1 hardcodes the live URL
 (see that file for why).
 
