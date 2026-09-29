@@ -20,7 +20,11 @@ redirect comes from the container's baked `.Rprofile`, which sets
 `options(move2_movebank_api_url = ...)`. (The release-gate version of the same
 check is `../compat/move2-r/verify.R`.) `move_pane.R` sources `url_shim.R` from the compat
 harness (mounted at `/work/move-r/`) because `move` v1 hardcodes the live URL
-(see that file for why).
+(see that file for why). Its `api` line reads the same `MOVEBANK_MIRROR_API_URL`
+the container uses, so it works under either networking mode with no edits
+(`http://localhost:8080/movebank` with host networking,
+`http://host.docker.internal:8080/movebank` on Docker Desktop); the mirror
+ignores the login's credentials.
 
 ## Prerequisites
 
