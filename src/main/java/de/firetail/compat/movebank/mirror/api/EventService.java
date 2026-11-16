@@ -83,19 +83,87 @@ public class EventService {
         // directory layout and deployment table).
         Map<String, List<DeploymentWindow>> deploymentsByTag =
                 mirrorService.getDeploymentsByTag(studyId);
-        EventIdSeq idSeq = new EventIdSeq();
 
-        boolean headerWritten = false;
+        // individual_id / deployment_id select deployments; only events inside them are sent.
+        // Without these filters every event is sent, deployed or not.
+        Set<DeploymentWindow> selected = null;
+        List<File> dirs;
+        if (individualId != null || deploymentId != null) {
+            selected = new HashSet<>(mirrorService.getDeploymentWindows(studyId, individualId, deploymentId));
+            Set<String> selectedTags = new HashSet<>();
+            for (DeploymentWindow w : selected) selectedTags.add(w.tagId());
+            dirs = new ArrayList<>();
+            for (File d : tagDirs(studyDir, null)) if (selectedTags.contains(d.getName())) dirs.add(d);
+        } else {
+            dirs = new ArrayList<>(tagDirs(studyDir, tagId));
+        }
+        dirs.sort(Comparator.comparing(File::getName, EventService::compareIds));
+
+        Out out = new Out(csv, effectiveAttrs);
         for (String stid : sensorTypeIds) {
-            if (individualId != null || deploymentId != null) {
-                headerWritten = writeEventsForDeployments(
-                        studyId, stid, individualId, deploymentId, studyDir, csv,
-                        effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
-            } else {
-                headerWritten = streamCsvFiles(
-                        byIndividual(tagDirs(studyDir, tagId), deploymentsByTag), stid, null, csv,
-                        effectiveAttrs, deploymentsByTag, idSeq, headerWritten);
+            writeSensorType(stid, dirs, deploymentsByTag, selected, out);
+        }
+    }
+
+    /**
+     * Writes one sensor type's events in live Movebank's order: by individual (numeric id),
+     * and within an individual by timestamp, merged across all tags the individual carried
+     * (tags can overlap in time, and a deployment without deploy_on is open towards the past).
+     * Events outside every deployment of their tag come last, tag by tag, in file order; they
+     * are only sent when no individual/deployment filter is given.
+     * <p>An event belongs to the first deployment of its tag whose window contains its
+     * timestamp (the same rule as before), so an event is never sent twice.
+     * <p>Memory: one pending row per tag of the current individual (k-way merge over the
+     * tags' files, each of which is read front to back).
+     */
+    private void writeSensorType(String sensorTypeId, List<File> dirs,
+                                 Map<String, List<DeploymentWindow>> deploymentsByTag,
+                                 Set<DeploymentWindow> selected, Out out) throws Exception {
+        // individual -> the tags (in tag order) that carry one of its (selected) deployments
+        TreeMap<String, List<File>> tagsByIndividual =
+                new TreeMap<>(Comparator.nullsLast(EventService::compareIds));
+        for (File dir : dirs) {
+            for (DeploymentWindow w : deploymentsByTag.getOrDefault(dir.getName(), List.of())) {
+                if (selected != null && !selected.contains(w)) continue;
+                List<File> tags = tagsByIndividual.computeIfAbsent(blankToNull(w.individualId()), k -> new ArrayList<>());
+                if (!tags.contains(dir)) tags.add(dir);
             }
+        }
+        for (Map.Entry<String, List<File>> e : tagsByIndividual.entrySet()) {
+            String individual = e.getKey();
+            List<RowStream> streams = new ArrayList<>();
+            for (File dir : e.getValue()) {
+                streams.add(new RowStream(streams.size(), dir, sensorTypeId,
+                        deploymentsByTag.getOrDefault(dir.getName(), List.of()),
+                        w -> w != null && Objects.equals(blankToNull(w.individualId()), individual)
+                                && (selected == null || selected.contains(w)),
+                        out));
+            }
+            merge(streams, out);
+        }
+        if (selected == null) {
+            for (File dir : dirs) {
+                merge(List.of(new RowStream(0, dir, sensorTypeId,
+                        deploymentsByTag.getOrDefault(dir.getName(), List.of()),
+                        Objects::isNull, out)), out);
+            }
+        }
+    }
+
+    /** k-way merge by timestamp; ties keep tag order. Closes every stream. */
+    private static void merge(List<RowStream> streams, Out out) throws Exception {
+        PriorityQueue<RowStream> queue = new PriorityQueue<>(
+                Comparator.comparing((RowStream s) -> s.ts, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparingInt(s -> s.order));
+        try {
+            for (RowStream s : streams) if (s.advance()) queue.add(s);
+            while (!queue.isEmpty()) {
+                RowStream s = queue.poll();
+                out.emit(s);
+                if (s.advance()) queue.add(s);
+            }
+        } finally {
+            for (RowStream s : streams) s.close();
         }
     }
 
@@ -163,120 +231,130 @@ public class EventService {
         return ids;
     }
 
-    private boolean writeEventsForDeployments(
-            String studyId, String sensorTypeId,
-            String individualId, String deploymentId,
-            File studyDir, CSVWriter csv,
-            List<String> requestedAttrs,
-            Map<String, List<DeploymentWindow>> deploymentsByTag,
-            EventIdSeq idSeq,
-            boolean headerWritten) throws Exception {
-
-        List<DeploymentWindow> windows =
-                mirrorService.getDeploymentWindows(studyId, individualId, deploymentId);
-
-        // Group windows by tag to avoid reading the same CSV files multiple times;
-        // tags in individual order, as live sends them
-        windows = new ArrayList<>(windows);
-        windows.sort((a, b) -> compareIds(a.individualId(), b.individualId()));
-        Map<String, List<DeploymentWindow>> windowsByTag = new LinkedHashMap<>();
-        for (DeploymentWindow w : windows)
-            windowsByTag.computeIfAbsent(w.tagId(), k -> new ArrayList<>()).add(w);
-
-        for (Map.Entry<String, List<DeploymentWindow>> entry : windowsByTag.entrySet()) {
-            File tagDir = new File(studyDir, entry.getKey());
-            List<DeploymentWindow> tagWindows = entry.getValue();
-            Predicate<String> filter = ts -> tagWindows.stream().anyMatch(w -> w.contains(ts));
-            headerWritten = streamCsvFiles(
-                    List.of(tagDir), sensorTypeId, filter, csv,
-                    requestedAttrs, deploymentsByTag, idSeq, headerWritten);
-        }
-        return headerWritten;
-    }
-
     // ── Core streaming ─────────────────────────────────────────────────────
 
     /**
-     * Streams all matching CSV files from {@code tagDirs} into {@code csv}.
-     * <p>If {@code timestampFilter} is non-null, only rows whose {@code timestamp}
-     * column value passes the filter are written.
-     * <p>If {@code requestedAttrs} is non-null, the output is projected to those
-     * columns in that order; columns absent from the source CSV are emitted as
-     * empty strings; columns present in the source but not requested are dropped.
-     *
-     * @return true if the CSV header was written (either before or during this call)
+     * Output side of one response: writes the header once (when the first source file is
+     * opened, as before), numbers events in output order and projects rows.
      */
-    private boolean streamCsvFiles(
-            List<File> tagDirs, String sensorTypeId,
-            Predicate<String> timestampFilter,
-            CSVWriter csv, List<String> requestedAttrs,
-            Map<String, List<DeploymentWindow>> deploymentsByTag,
-            EventIdSeq idSeq,
-            boolean headerWritten) throws Exception {
+    private static final class Out {
+        final CSVWriter csv;
+        final List<String> requestedAttrs;   // null: raw row + synthetic columns
+        final EventIdSeq idSeq = new EventIdSeq();
+        boolean headerWritten;
 
-        for (File tagDir : tagDirs) {
-            if (!tagDir.isDirectory()) continue;
-            File[] csvFiles = tagDir.listFiles(
-                (d, name) -> name.startsWith(sensorTypeId + "_") && name.endsWith(".csv"));
-            if (csvFiles == null || csvFiles.length == 0) continue;
-            Arrays.sort(csvFiles); // chronological order (timestamp baked into filename)
+        Out(CSVWriter csv, List<String> requestedAttrs) {
+            this.csv = csv;
+            this.requestedAttrs = requestedAttrs;
+        }
 
-            String currentTagId = tagDir.getName();
-            List<DeploymentWindow> tagDeployments =
-                    deploymentsByTag.getOrDefault(currentTagId, Collections.emptyList());
+        void header(String[] sourceHeader) {
+            if (headerWritten) return;
+            csv.writeNext(requestedAttrs == null ? augmentHeader(sourceHeader)
+                    : requestedAttrs.toArray(new String[0]), false);
+            headerWritten = true;
+        }
 
-            for (File csvFile : csvFiles) {
-                try (CSVReader reader = new CSVReader(
-                        new InputStreamReader(new FileInputStream(csvFile), StandardCharsets.UTF_8))) {
-                    String[] header = reader.readNext();
-                    if (header == null) continue;
-                    if (!headerWritten) {
-                        String[] outHeader = (requestedAttrs == null)
-                                ? augmentHeader(header)
-                                : requestedAttrs.toArray(new String[0]);
-                        csv.writeNext(outHeader, false);
-                        headerWritten = true;
-                    }
-                    int tsIdx = indexOf(header, "timestamp");
-                    int[] projection = (requestedAttrs == null) ? null
-                            : buildProjection(header, requestedAttrs);
-                    String[] row;
-                    while ((row = reader.readNext()) != null) {
-                        String ts = eventTimestamp(row, tsIdx);
-                        if (timestampFilter != null && !timestampFilter.test(ts)) continue;
-                        DeploymentWindow active = findActive(tagDeployments, ts);
-                        long eventId = idSeq.next();
-                        if (projection == null) {
-                            // No attribute projection: emit raw row plus synthetic columns.
-                            csv.writeNext(augmentRow(row, currentTagId, active, eventId), false);
-                        } else {
-                            String[] projected = new String[projection.length];
-                            for (int i = 0; i < projection.length; i++) {
-                                String name = requestedAttrs.get(i);
-                                int srcIdx = projection[i];
-                                // Always prefer the value from the underlying CSV
-                                // when present and meaningful. Synthetic values
-                                // (tag_id / individual_id / deployment_id / event_id)
-                                // are a fallback for older mirrors that didn't
-                                // download those columns.
-                                String fromSource = (srcIdx >= 0 && srcIdx < row.length)
-                                        ? row[srcIdx] : null;
-                                if (fromSource != null && !fromSource.isEmpty()
-                                        && !"NA".equals(fromSource)) {
-                                    projected[i] = fromSource;
-                                } else {
-                                    String syn = synthetic(name, currentTagId, active, eventId);
-                                    // Empty, as live Movebank sends missing values.
-                                    projected[i] = (syn != null) ? syn : "";
-                                }
-                            }
-                            csv.writeNext(projected, false);
-                        }
-                    }
+        /**
+         * Writes the stream's current row. If {@code requestedAttrs} is non-null, the row is
+         * projected to those columns in that order; columns absent from the source CSV are
+         * empty; source columns not requested are dropped.
+         */
+        void emit(RowStream s) {
+            long eventId = idSeq.next();
+            if (s.projection == null) {
+                // No attribute projection: emit raw row plus synthetic columns.
+                csv.writeNext(augmentRow(s.row, s.tagId, s.active, eventId), false);
+                return;
+            }
+            String[] projected = new String[s.projection.length];
+            for (int i = 0; i < s.projection.length; i++) {
+                String name = requestedAttrs.get(i);
+                int srcIdx = s.projection[i];
+                // Always prefer the value from the underlying CSV when present and
+                // meaningful. Synthetic values (tag_id / individual_id / deployment_id /
+                // event_id) are a fallback for older mirrors that didn't download those columns.
+                String fromSource = (srcIdx >= 0 && srcIdx < s.row.length) ? s.row[srcIdx] : null;
+                if (fromSource != null && !fromSource.isEmpty() && !"NA".equals(fromSource)) {
+                    projected[i] = fromSource;
+                } else {
+                    String syn = synthetic(name, s.tagId, s.active, eventId);
+                    // Empty, as live Movebank sends missing values.
+                    projected[i] = (syn != null) ? syn : "";
                 }
             }
+            csv.writeNext(projected, false);
         }
-        return headerWritten;
+    }
+
+    /**
+     * The rows of one tag folder for one sensor type, read file by file (chronological
+     * file names), keeping only rows whose deployment passes {@code accept}. The
+     * deployment of a row is the first window of the tag that contains its timestamp,
+     * or null if none does.
+     */
+    private static final class RowStream implements Closeable {
+        final int order;
+        final String tagId;
+        private final Iterator<File> files;
+        private final List<DeploymentWindow> tagWindows;
+        private final Predicate<DeploymentWindow> accept;
+        private final Out out;
+        private CSVReader reader;
+        private int tsIdx;
+        private int[] fileProjection;
+
+        // current row
+        String[] row;
+        String ts;
+        DeploymentWindow active;
+        int[] projection;
+
+        RowStream(int order, File tagDir, String sensorTypeId, List<DeploymentWindow> tagWindows,
+                  Predicate<DeploymentWindow> accept, Out out) {
+            this.order = order;
+            this.tagId = tagDir.getName();
+            this.tagWindows = tagWindows;
+            this.accept = accept;
+            this.out = out;
+            File[] csvFiles = tagDir.isDirectory() ? tagDir.listFiles(
+                    (d, name) -> name.startsWith(sensorTypeId + "_") && name.endsWith(".csv")) : null;
+            if (csvFiles == null) csvFiles = new File[0];
+            Arrays.sort(csvFiles); // chronological order (timestamp baked into filename)
+            this.files = Arrays.asList(csvFiles).iterator();
+        }
+
+        /** Moves to the next accepted row; false when the tag has none left. */
+        boolean advance() throws Exception {
+            while (true) {
+                if (reader == null) {
+                    if (!files.hasNext()) { row = null; ts = null; active = null; return false; }
+                    open(files.next());
+                    continue;
+                }
+                String[] r = reader.readNext();
+                if (r == null) { close(); continue; }
+                String t = eventTimestamp(r, tsIdx);
+                DeploymentWindow w = findActive(tagWindows, t);
+                if (!accept.test(w)) continue;
+                row = r; ts = t; active = w; projection = fileProjection;
+                return true;
+            }
+        }
+
+        private void open(File csvFile) throws Exception {
+            reader = new CSVReader(new InputStreamReader(new FileInputStream(csvFile), StandardCharsets.UTF_8));
+            String[] header = reader.readNext();
+            if (header == null) { close(); return; }
+            out.header(header);
+            tsIdx = indexOf(header, "timestamp");
+            fileProjection = (out.requestedAttrs == null) ? null : buildProjection(header, out.requestedAttrs);
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (reader != null) { reader.close(); reader = null; }
+        }
     }
 
     /** Returns the synthetic value for {@code colName}, or null if {@code colName} is not synthetic. */
@@ -355,19 +433,6 @@ public class EventService {
         return Arrays.asList(dirs);
     }
 
-    /**
-     * Tag folders in the order of the individual each tag is deployed on (its first
-     * deployment's individual); tags without one go last, in tag order.
-     */
-    private static List<File> byIndividual(List<File> dirs, Map<String, List<DeploymentWindow>> deploymentsByTag) {
-        List<File> out = new ArrayList<>(dirs);
-        out.sort(Comparator.comparing((File d) -> {
-            List<DeploymentWindow> ws = deploymentsByTag.get(d.getName());
-            return ws == null || ws.isEmpty() ? null : ws.get(0).individualId();
-        }, Comparator.nullsLast(EventService::compareIds)).thenComparing(File::getName, EventService::compareIds));
-        return out;
-    }
-
     /** Numeric order for Movebank ids (digit strings); anything else falls back to text order. */
     static int compareIds(String a, String b) {
         boolean na = a != null && a.matches("\\d+"), nb = b != null && b.matches("\\d+");
@@ -386,6 +451,10 @@ public class EventService {
         for (int i = 0; i < arr.length; i++)
             if (value.equals(arr[i])) return i;
         return -1;
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s;
     }
 
     private static String nullIfEmpty(String s) {

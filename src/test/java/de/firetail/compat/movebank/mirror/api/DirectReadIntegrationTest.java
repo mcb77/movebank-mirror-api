@@ -57,6 +57,15 @@ class DirectReadIntegrationTest {
     }
 
     @Test
+    void linesEndInCrlfAsLiveMovebank() {
+        // Live Movebank ends CSV lines with CRLF (measured 2026-09-29); the controller's
+        // CSVWriter does the same for every entity type.
+        String csv = rest.getForObject("/movebank/service/direct-read?entity_type=tag_type", String.class);
+        assertTrue(csv.contains("\r\n"), "CRLF line ends");
+        assertEquals(csv.split("\n", -1).length, csv.split("\r\n", -1).length, "no bare LF");
+    }
+
+    @Test
     void unknownEntityTypeReturns400() {
         var resp = rest.getForEntity(
                 "/movebank/service/direct-read?entity_type=does-not-exist", String.class);

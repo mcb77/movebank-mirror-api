@@ -134,7 +134,9 @@ class EventServiceTest {
         List<Map<String, String>> rows = queryEvents(
             "study_id", STUDY_ID, "sensor_sensor_type_id", SENSOR_TYPE, "tag_id", TAG_A);
 
-        assertEquals(List.of(JAN, MAR, AUG, NOV), timestamps(rows));
+        // All four events of tag A, in live order: X's (JAN, MAR), Y's (NOV), then the
+        // event outside every deployment (AUG, between X's end and Y's start) last.
+        assertEquals(List.of(JAN, MAR, NOV, AUG), timestamps(rows));
     }
 
     // ── no filter ─────────────────────────────────────────────────────────
@@ -159,7 +161,9 @@ class EventServiceTest {
         // Same payload as the explicit-sensor-type case — the fixture only
         // has one sensor type, so the union equals the single-type result.
         assertEquals(6, rows.size());
-        assertEquals(List.of(JAN, MAR, AUG, NOV, AUG, NOV), timestamps(rows));
+        // Live order: X (tag A Jan-Jun, then tag B from Jul), Y (tag A Oct-Dec),
+        // then tag A's undeployed AUG.
+        assertEquals(List.of(JAN, MAR, AUG, NOV, NOV, AUG), timestamps(rows));
     }
 
     @Test
@@ -177,12 +181,12 @@ class EventServiceTest {
             "sensor_sensor_type_id", SENSOR_TYPE,
             "individual_id", INDIVIDUAL_X + "," + INDIVIDUAL_Y);
 
-        // Windows for X+Y, grouped by tag (insertion order from study.deployments):
-        //   tag A: X (Jan–Jun) + Y (Oct–Dec)  — events JAN, MAR (in X), NOV (in Y); AUG falls in neither
-        //   tag B: X (Jul–open)               — events AUG, NOV
-        // CSV emit order: tag A's chronological events, then tag B's.
+        // Live order: individual, then timestamp across that individual's tags.
+        //   X: tag A Jan–Jun (JAN, MAR), tag B Jul–open (AUG, NOV)
+        //   Y: tag A Oct–Dec (NOV)
+        // Tag A's AUG falls in no selected deployment and is not sent.
         List<String> ts = timestamps(rows);
-        assertEquals(List.of(JAN, MAR, NOV, AUG, NOV), ts);
+        assertEquals(List.of(JAN, MAR, AUG, NOV, NOV), ts);
     }
 
     @Test
@@ -264,6 +268,88 @@ class EventServiceTest {
             assertArrayEquals(new String[]{"timestamp", "does_not_exist"}, r.readNext());
             assertArrayEquals(new String[]{JAN, ""}, r.readNext());
         }
+    }
+
+    // ── live row order: individual, then timestamp ───────────────────────
+
+    @Test
+    void noFilterOrdersByIndividualThenTimestampWithUndeployedLast() throws Exception {
+        List<Map<String, String>> rows = queryEvents(
+            "study_id", STUDY_ID, "sensor_sensor_type_id", SENSOR_TYPE);
+
+        List<String> got = rows.stream()
+            .map(r -> r.get("individual_id") + "|" + r.get("tag_id") + "|" + r.get("timestamp")).toList();
+        assertEquals(List.of(
+            INDIVIDUAL_X + "|" + TAG_A + "|" + JAN,
+            INDIVIDUAL_X + "|" + TAG_A + "|" + MAR,
+            INDIVIDUAL_X + "|" + TAG_B + "|" + AUG,
+            INDIVIDUAL_X + "|" + TAG_B + "|" + NOV,
+            INDIVIDUAL_Y + "|" + TAG_A + "|" + NOV,
+            "|" + TAG_A + "|" + AUG), got);
+        // event_id numbers the rows in output order
+        assertEquals(List.of("1", "2", "3", "4", "5", "6"),
+            rows.stream().map(r -> r.get("event_id")).toList());
+    }
+
+    @Test
+    void overlappingTagsOnOneIndividualAreMergedByTimestamp() throws Exception {
+        // Individual 900 carries two tags at once. The tag with the LOWER id (701) was
+        // deployed later, and the earlier tag (702) has no deploy_on (open towards the
+        // past). Sorting tag folders by id would send 701's rows first; live merges by time.
+        String study = "2";
+        createStudyJson(study, List.of(
+            deployment("801", "701", "900", "2020-03-01 00:00:00.000", ""),
+            deployment("802", "702", "900", "", "")));
+        createEventCsv(study, "701", SENSOR_TYPE, new String[][]{
+            { "timestamp", "location_lat" },
+            { "2020-03-05 00:00:00.000", "1" },
+            { "2020-03-07 00:00:00.000", "3" },
+        });
+        createEventCsv(study, "702", SENSOR_TYPE, new String[][]{
+            { "timestamp", "location_lat" },
+            { "2019-12-31 00:00:00.000", "0" },
+            { "2020-03-06 00:00:00.000", "2" },
+            { "2020-03-08 00:00:00.000", "4" },
+        });
+
+        List<Map<String, String>> rows = queryEvents(
+            "study_id", study, "sensor_sensor_type_id", SENSOR_TYPE);
+
+        assertEquals(List.of("0", "1", "2", "3", "4"),
+            rows.stream().map(r -> r.get("location_lat")).toList());
+        assertTrue(rows.stream().allMatch(r -> "900".equals(r.get("individual_id"))),
+            "blank deploy_on is an open start: the 2019 event belongs to 900 too");
+    }
+
+    @Test
+    void tagMovedBetweenIndividualsIsSplitByIndividual() throws Exception {
+        // Tag 711 is on individual 20 first, then on individual 3. Individual 3 sorts
+        // first (numeric ids), so its later events come before 20's earlier ones.
+        String study = "3";
+        createStudyJson(study, List.of(
+            deployment("811", "711", "20", "2020-01-01 00:00:00.000", "2020-01-31 00:00:00.000"),
+            deployment("812", "711", "3",  "2020-02-01 00:00:00.000", "")));
+        createEventCsv(study, "711", SENSOR_TYPE, new String[][]{
+            { "timestamp", "location_lat" },
+            { "2020-01-10 00:00:00.000", "a" },
+            { "2020-02-10 00:00:00.000", "b" },
+        });
+
+        List<Map<String, String>> rows = queryEvents(
+            "study_id", study, "sensor_sensor_type_id", SENSOR_TYPE);
+
+        assertEquals(List.of("3|b", "20|a"),
+            rows.stream().map(r -> r.get("individual_id") + "|" + r.get("location_lat")).toList());
+    }
+
+    @Test
+    void compareIdsIsNumericForDigitStrings() {
+        assertTrue(EventService.compareIds("9", "10") < 0);
+        assertTrue(EventService.compareIds("010", "9") > 0);
+        assertEquals(0, EventService.compareIds("0007", "7"));
+        assertEquals(0, EventService.compareIds("000", "0"));
+        assertTrue(EventService.compareIds("abc", "abd") < 0);
+        assertTrue(EventService.compareIds("10", "9a") < 0, "non-numeric falls back to text order");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────
