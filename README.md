@@ -181,6 +181,17 @@ sibling directories, the bundled `gradle.properties` already enables them
 via Gradle's `includeBuild`. Comment out the `localMovebankApiClient` /
 `localMovebankMirror` lines in `gradle.properties` for a release/CI build.
 
+## Related projects
+
+Together these form a toolchain for working with Movebank data offline:
+
+- [movebank-api-client](https://github.com/mcb77/movebank-api-client): Java client for the Movebank REST API
+- [movebank-mirror](https://github.com/mcb77/movebank-mirror): mirrors Movebank studies to plain files on your disk; resumable, incremental
+- **movebank-mirror-api** (this repository): serves the Movebank REST API from a local mirror, a drop-in for `move`/`move2` and the Java client
+- [movebank-rocker](https://github.com/mcb77/movebank-rocker): pinned R environment (rocker/geospatial + move, move2, moveVis, sf)
+
+Background: [Keep a Movebank study on your own computer](https://www.schaeuffelhut-berger.de/en/blog/keep-a-movebank-study-on-your-own-computer/?ref=github)
+
 ---
 
 ## License
