@@ -382,15 +382,22 @@ Measured 2026-09-29 on three requests (`move`'s, `move2`'s
 `attributes=all`, and a plain single-individual GPS request).
 
 **Where we encode it.** `EventService.writeEvents` sorts the sensor types
-with `compareIds` (numeric); `byIndividual(...)` orders the tag folders by
-the individual their deployment belongs to, and `writeEventsForDeployments`
-sorts the windows the same way. Rows within a tag come from the CSV files in
-filename order, which is chronological. No in-memory sort: the response
-stays streamed.
+with `compareIds` (numeric). `writeSensorType` groups the deployments by
+individual (numeric order) and, per individual, runs a k-way merge by
+timestamp over every tag that individual carried (`RowStream` per tag, read
+file by file in filename order, which is chronological). An event belongs to
+the first deployment of its tag whose window contains it, so it is sent at
+most once. Without an `individual_id` / `deployment_id` filter, events outside
+every deployment follow at the end, tag by tag. No in-memory sort: memory is
+one pending row per tag of the current individual, and the response stays
+streamed. (Before 0.0.3 whole tag folders were streamed one after the other,
+which was out of order for individuals with several tags and for tags moved
+between individuals: 196 of 601 studies in a test mirror.)
 
-**Untested:** ties on the timestamp (4 in that study, which came out in
-live's order), and one individual carried by several tags (would need a
-merge across tag folders, not folder-by-folder streaming).
+**Untested against live:** where live puts events outside every deployment
+(we put them last), and ties on the timestamp (4 in study 2911040, which came
+out in live's order). Covered by unit tests: overlapping tags on one
+individual, a tag moved between individuals, open `deploy_on`.
 
 ---
 

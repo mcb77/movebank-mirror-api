@@ -120,14 +120,19 @@ expose with `-b 0.0.0.0`, put a reverse proxy with auth in front of it.
 | `sensor`          | `study_id` (or `tag_study_id`)                          | `sensors` array in study JSON                           |
 | `study_attribute` | `study_id`, `sensor_type_id`                            | `attributesBySensorTypeIDs` in study JSON               |
 | `event`           | `study_id`, `sensor_sensor_type_id` (+ filters)         | CSV files under `<study>/<tag>/`                        |
-| `tag_type`        | none                                                    | Hardcoded (5 well-known sensor types)                   |
+| `tag_type`        | none                                                    | Hardcoded (9 sensor types, as live `/tag_type`)         |
 
 `event` accepts `tag_id`, `individual_id`, or `deployment_id` to scope output.
 With `individual_id` or `deployment_id` the server consults the deployment
-windows in the study JSON and filters events to those windows
-(`deploy_on_timestamp` / `deploy_off_timestamp`, falling back to
-`timestamp_start` / `timestamp_end`). Missing data is treated as an unbounded
-window edge.
+windows in the study JSON and sends only the events of those deployments. A
+window runs from `deploy_on_timestamp` to `deploy_off_timestamp`; a blank bound
+is open. An event belongs to the first deployment of its tag whose window
+contains it.
+
+Rows come in live Movebank's order: sensor type, then individual, then
+timestamp, merged across all tags an individual carried. Without a filter,
+events outside every deployment follow at the end, tag by tag. Details and
+measurements: [`BUG_COMPATIBILITY.md`](BUG_COMPATIBILITY.md).
 
 ---
 
@@ -135,9 +140,10 @@ window edge.
 
 Tracked in [`TODO.md`](TODO.md). Highlights:
 
-- **`attributes` projection** — currently ignored; all columns returned. Matters for clients (e.g. `StudyBrowser.getRequestBuilderEvent`) that build attribute-restricted requests.
-- **`sort` / `limit` parameters** — currently ignored.
-- **Authentication** — no credential check; do not expose without a proxy.
+- **`sort` / `limit` parameters** — currently ignored. (Live Movebank answers `limit=` on `/event` with HTTP 500.)
+- **`/event` with `attributes=all`** lacks four columns live derives from its own tables: `study_id`, `individual_local_identifier`, `tag_local_identifier`, `individual_taxon_canonical_name`. Neither `move` nor `move2` needs them.
+- **`/event` column order** differs from live. Clients that read columns by name (both R packages) are unaffected; positional clients would break.
+- **Authentication** — credentials are accepted without a check; do not expose without a proxy.
 - **In-memory cache** — every request re-reads study JSON from disk.
 
 Most clients work fine with these gaps; they hit the 80% the API is used for.
