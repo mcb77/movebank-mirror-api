@@ -167,7 +167,7 @@ Whatever `movebank-mirror` writes:
 Reading is done by `movebank-mirror`'s `reader` package (`MirrorReader`,
 `MovebankEventCsv`), so this server stays in lockstep with the writer and
 shares its event order and deployment assignment with
-[movebank-mcp](https://github.com/mcb77/movebank-mcp). This server adds the
+[movebank-mirror-mcp](https://github.com/mcb77/movebank-mirror-mcp). This server adds the
 HTTP layer and the quirks of Movebank's entity responses.
 
 ---
