@@ -38,8 +38,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'com.opencsv:opencsv:5.9'
     implementation 'info.picocli:picocli:4.7.6'
-    // The mirror's reader (de.firetail.compat.movebank.mirror.reader) is new in 0.0.4;
-    // until that is on Maven Central, build with -PlocalMovebankMirror.
+    // The mirror's reader (de.firetail.compat.movebank.mirror.reader) is new in 0.0.4.
     implementation 'de.firetail.compat.movebank:movebank-mirror:0.0.4'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'

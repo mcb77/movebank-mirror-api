@@ -190,9 +190,6 @@ sibling directories, build against them via Gradle's `includeBuild`: pass
 `-PlocalMovebankApiClient` / `-PlocalMovebankMirror`, or uncomment those lines
 in `gradle.properties` (and comment them out again for a release/CI build).
 
-The current code needs movebank-mirror 0.0.4 (the `reader` package). Until
-that is on Maven Central, build with `-PlocalMovebankMirror`.
-
 ## Related projects
 
 Together these form a toolchain for working with Movebank data offline:
