@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'de.firetail.compat.movebank'
-version = '0.0.3'
+version = '0.0.4'
 description = 'Read-only Movebank REST API replay backed by a local movebank-mirror directory.'
 
 base {

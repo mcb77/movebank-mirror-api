@@ -60,7 +60,7 @@ function bodies), `move2` reads the API base URL from
 startup; no monkey-patching of `httr::GET` required.
 
 ## Current status
-
+Last verified 2026-11-17 with server 0.0.4 against `move2` 0.4.4 (movebank-rocker v0.2.0) and study
 Last verified against `move2` 0.5.0 (rocker/geospatial container) and study
 2911040: **4 / 4 checks pass**. `movebank_download_study` returns a valid
 `move2`/`sf` object containing every event from every location-capable

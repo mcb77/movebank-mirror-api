@@ -57,7 +57,7 @@ movement-ecology workflows. If a critical use case isn't covered, add it to
 `verify.R` and update the table above.
 
 ## Current status
-
+Last verified 2026-11-17 with server 0.0.4 against `move` 4.2.6 (movebank-rocker v0.2.0) and study
 Last verified against `move` 4.2.7 (rocker/geospatial container) and study
 2911040: **4 / 4 checks pass**. `getMovebankData` returns a valid
 `MoveStack` containing every event from every location-capable sensor in
