@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencsv.CSVReader;
 import com.opencsv.CSVWriter;
 import de.firetail.compat.movebank.mirror.StudyJson;
+import de.firetail.compat.movebank.mirror.reader.MirrorReader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,8 +41,9 @@ class EventServiceTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        mirrorService = new MirrorService(mirrorDir.toString());
-        eventService  = new EventService(mirrorDir.toString(), mirrorService);
+        MirrorReader reader = new MirrorReader(mirrorDir.toFile());
+        mirrorService = new MirrorService(reader);
+        eventService  = new EventService(reader);
 
         // Study setup:
         //   Deploy 1: individual X, tag A, Jan 1 – Jun 30
@@ -340,16 +342,6 @@ class EventServiceTest {
 
         assertEquals(List.of("3|b", "20|a"),
             rows.stream().map(r -> r.get("individual_id") + "|" + r.get("location_lat")).toList());
-    }
-
-    @Test
-    void compareIdsIsNumericForDigitStrings() {
-        assertTrue(EventService.compareIds("9", "10") < 0);
-        assertTrue(EventService.compareIds("010", "9") > 0);
-        assertEquals(0, EventService.compareIds("0007", "7"));
-        assertEquals(0, EventService.compareIds("000", "0"));
-        assertTrue(EventService.compareIds("abc", "abd") < 0);
-        assertTrue(EventService.compareIds("10", "9a") < 0, "non-numeric falls back to text order");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────

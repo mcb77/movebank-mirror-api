@@ -164,8 +164,11 @@ Whatever `movebank-mirror` writes:
     └── <sensorTypeId>_update_<ts>.csv
 ```
 
-The `StudyJson` deserializer is consumed from `movebank-mirror`'s library, so
-this server stays in lockstep with the writer.
+Reading is done by `movebank-mirror`'s `reader` package (`MirrorReader`,
+`MovebankEventCsv`), so this server stays in lockstep with the writer and
+shares its event order and deployment assignment with
+[movebank-mcp](https://github.com/mcb77/movebank-mcp). This server adds the
+HTTP layer and the quirks of Movebank's entity responses.
 
 ---
 
@@ -183,9 +186,12 @@ Requires JDK 21.
 ### Local development against unreleased dependencies
 
 If you have `movebank-api-client` and/or `movebank-mirror` checked out as
-sibling directories, the bundled `gradle.properties` already enables them
-via Gradle's `includeBuild`. Comment out the `localMovebankApiClient` /
-`localMovebankMirror` lines in `gradle.properties` for a release/CI build.
+sibling directories, build against them via Gradle's `includeBuild`: pass
+`-PlocalMovebankApiClient` / `-PlocalMovebankMirror`, or uncomment those lines
+in `gradle.properties` (and comment them out again for a release/CI build).
+
+The current code needs movebank-mirror 0.0.4 (the `reader` package). Until
+that is on Maven Central, build with `-PlocalMovebankMirror`.
 
 ## Related projects
 

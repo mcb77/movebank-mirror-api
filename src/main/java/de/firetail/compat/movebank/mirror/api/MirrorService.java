@@ -1,121 +1,31 @@
 package de.firetail.compat.movebank.mirror.api;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencsv.CSVWriter;
 import de.firetail.compat.movebank.mirror.StudyJson;
-import org.springframework.beans.factory.annotation.Value;
+import de.firetail.compat.movebank.mirror.reader.MirrorReader;
+import de.firetail.compat.movebank.mirror.reader.SensorType;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
 @Service
 public class MirrorService {
 
-    private final String mirrorBaseDir;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final MirrorReader reader;
 
-    public MirrorService(@Value("${movebank.mirror.base-dir}") String mirrorBaseDir) {
-        this.mirrorBaseDir = mirrorBaseDir;
+    public MirrorService(MirrorReader reader) {
+        this.reader = reader;
     }
 
-    // ── Tag types (static) ─────────────────────────────────────────────────
-
-    // Mirror of the live Movebank /tag_type table (verified 2026-05-07 by
-    // curl against the live API). Columns and order match what live returns:
-    // description, external_id, id, is_location_sensor, name (alphabetical).
-    // IDs match the ones the live API uses; getting this right matters because
-    // some clients look up sensor types by their numeric id, and the move R
-    // package crosses /tag_type with /event's sensor_type_id column.
-    //
-    // 9 sensor types currently catalogued by Movebank. If a new one appears
-    // upstream that you need served locally, add it here.
-    private static final String[][] TAG_TYPES = {
-        // description, external_id,            id,         is_location_sensor, name
-        { "",          "bird-ring",             "397",      "true",  "Bird Ring"             },
-        { "",          "gps",                   "653",      "true",  "GPS"                   },
-        { "",          "radio-transmitter",     "673",      "true",  "Radio Transmitter"     },
-        { "",          "argos-doppler-shift",   "82798",    "true",  "Argos Doppler Shift"   },
-        { "",          "natural-mark",          "2365682",  "true",  "Natural Mark"          },
-        { "",          "acceleration",          "2365683",  "false", "Acceleration"          },
-        { "",          "solar-geolocator",      "3886361",  "true",  "Solar Geolocator"      },
-        { "",          "accessory-measurements","7842954",  "false", "Accessory Measurements"},
-        { "",          "solar-geolocator-raw",  "9301403",  "false", "Solar Geolocator Raw"  },
-    };
+    // Columns and order of the live /tag_type response (alphabetical). The rows
+    // come from SensorType.ALL in movebank-mirror.
     private static final String[] TAG_TYPE_HEADER = {
         "description", "external_id", "id", "is_location_sensor", "name"
     };
 
-    // ── File helpers ───────────────────────────────────────────────────────
-
-    private File studyFile(String studyId) {
-        return new File(mirrorBaseDir, String.format("%012d", Long.parseLong(studyId)) + ".json");
-    }
-
     StudyJson loadStudy(String studyId) throws IOException {
-        File f = studyFile(studyId);
-        return f.exists() ? mapper.readValue(f, StudyJson.class) : null;
-    }
-
-    private List<StudyJson> loadAllStudies() throws IOException {
-        File dir = new File(mirrorBaseDir);
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".json") && !name.endsWith("-license.json"));
-        if (files == null) return Collections.emptyList();
-        Arrays.sort(files);
-        List<StudyJson> studies = new ArrayList<>();
-        for (File f : files) {
-            try { studies.add(mapper.readValue(f, StudyJson.class)); }
-            catch (Exception e) { /* skip malformed file */ }
-        }
-        return studies;
-    }
-
-    // ── Deployment windows ─────────────────────────────────────────────────
-
-    /**
-     * Returns deployment windows matching the given filters.
-     * <p>{@code individualId} and {@code deploymentId} accept either a single id or a
-     * comma-separated list — the latter is what {@code move::getMovebankData} sends
-     * for studies with many individuals. Both are optional; passing neither returns
-     * every deployment in the study.
-     * <p>
-     * The time window is {@code deploy_on_timestamp} / {@code deploy_off_timestamp}; a blank
-     * bound is open. {@code timestamp_start} / {@code timestamp_end} are not used: they are the
-     * first and last located fix, and live Movebank assigns the deployment to events outside
-     * them too (measured 2026-09-29, study 2911040: this rule matches live's deployment_id on
-     * all 114,929 events; the old fallback left 99 undeployed).
-     */
-    public List<DeploymentWindow> getDeploymentWindows(
-            String studyId, String individualId, String deploymentId) throws IOException {
-        StudyJson study = loadStudy(studyId);
-        if (study == null || study.deployments == null) return Collections.emptyList();
-
-        Set<String> individualIds = csvToSet(individualId);
-        Set<String> deploymentIds = csvToSet(deploymentId);
-
-        List<DeploymentWindow> windows = new ArrayList<>();
-        for (Map<String, String> d : study.deployments) {
-            if (!individualIds.isEmpty() && !individualIds.contains(d.get("individual_id"))) continue;
-            if (!deploymentIds.isEmpty() && !deploymentIds.contains(d.get("id")))           continue;
-            String tagId = d.get("tag_id");
-            if (tagId == null || tagId.isBlank()) continue;
-            String from = firstNonBlank(d.get("deploy_on_timestamp"));
-            String to   = firstNonBlank(d.get("deploy_off_timestamp"));
-            windows.add(new DeploymentWindow(
-                    tagId, d.get("individual_id"), d.get("id"), from, to));
-        }
-        return windows;
-    }
-
-    /** All deployment windows in the study, indexed by tag id. Used to enrich event rows. */
-    public Map<String, List<DeploymentWindow>> getDeploymentsByTag(String studyId) throws IOException {
-        List<DeploymentWindow> all = getDeploymentWindows(studyId, null, null);
-        Map<String, List<DeploymentWindow>> byTag = new HashMap<>();
-        for (DeploymentWindow w : all) {
-            byTag.computeIfAbsent(w.tagId(), k -> new ArrayList<>()).add(w);
-        }
-        return byTag;
+        return reader.study(studyId);
     }
 
     /**
@@ -132,12 +42,6 @@ public class MirrorService {
         return out;
     }
 
-    private static String firstNonBlank(String... values) {
-        for (String v : values)
-            if (v != null && !v.isBlank()) return v;
-        return null;
-    }
-
     // ── Entity handlers ────────────────────────────────────────────────────
 
     public void writeStudies(Map<String, String> params, CSVWriter csv) throws IOException {
@@ -150,7 +54,7 @@ public class MirrorService {
             rows = s != null ? List.of(s.study) : Collections.emptyList();
         } else {
             rows = new ArrayList<>();
-            for (StudyJson s : loadAllStudies()) {
+            for (StudyJson s : reader.studies()) {
                 if (name == null || name.equals(s.study.get("name")))
                     rows.add(s.study);
             }
@@ -249,8 +153,9 @@ public class MirrorService {
 
     public void writeTagTypes(CSVWriter csv) {
         csv.writeNext(TAG_TYPE_HEADER, false);
-        for (String[] row : TAG_TYPES)
-            csv.writeNext(row, false);
+        for (SensorType t : SensorType.ALL)
+            csv.writeNext(new String[]{ t.description(), t.externalId(), t.id(),
+                    Boolean.toString(t.isLocationSensor()), t.name() }, false);
     }
 
     // ── CSV helper ─────────────────────────────────────────────────────────
